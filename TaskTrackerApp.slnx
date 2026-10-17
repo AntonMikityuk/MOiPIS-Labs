@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TaskTracker.ProcessEngine/TaskTracker.ProcessEngine.csproj" />
+    <Project Path="src/TaskTracker.ProcessEngine.Tests/TaskTracker.ProcessEngine.Tests.csproj" />
+  </Folder>
+</Solution>

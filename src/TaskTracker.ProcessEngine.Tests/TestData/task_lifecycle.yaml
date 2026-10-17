@@ -1,0 +1,116 @@
+process: task_lifecycle
+title: Жизненный цикл задачи
+class: task
+create_roles: [analyst, pm]
+
+actions:
+  - id: analyze
+    title: Взять в анализ
+  - id: start_dev
+    title: Начать разработку
+  - id: submit_review
+    title: Отправить на ревью
+  - id: approve
+    title: Одобрить
+  - id: reject
+    title: Вернуть
+  - id: pass_test
+    title: Тест пройден
+  - id: fail_test
+    title: Тест не пройден
+  - id: cancel
+    title: Отменить
+
+predicates:
+  - id: has_title
+    parameter: title
+    operator: filled
+  - id: has_description
+    parameter: description
+    operator: filled
+  - id: priority_in_range
+    parameter: priority
+    operator: in_range
+  - id: estimated_filled
+    parameter: estimated_hours
+    operator: filled
+  - id: estimated_in_range
+    parameter: estimated_hours
+    operator: in_range
+  - id: is_bug
+    class: bug
+  - id: high_priority
+    parameter: priority
+    operator: "<="
+    value: 2
+
+states:
+  - id: backlog
+    title: Бэклог
+    initial: true
+    roles: [analyst, pm]
+    edit_parameters: true
+  - id: analysis
+    title: Анализ
+    roles: [analyst]
+    edit_parameters: true
+  - id: development
+    title: Разработка
+    roles: [developer]
+    edit_parameters: false
+  - id: review
+    title: Ревью
+    roles: [developer]
+    edit_parameters: false
+  - id: testing
+    title: Тестирование
+    roles: [tester]
+    edit_parameters: false
+  - id: done
+    title: Выполнено
+    final: true
+  - id: cancelled
+    title: Отменено
+    final: true
+
+transitions:
+  - from: backlog
+    action: analyze
+    to: analysis
+  - from: backlog
+    action: cancel
+    to: cancelled
+  - from: analysis
+    action: start_dev
+    to: development
+    condition:
+      - [has_title, has_description, priority_in_range, estimated_filled, estimated_in_range]
+  - from: analysis
+    action: reject
+    to: backlog
+  - from: development
+    action: submit_review
+    to: review
+  - from: development
+    action: cancel
+    to: cancelled
+  - from: review
+    action: approve
+    to: done
+    condition:
+      - [is_bug, high_priority]
+  - from: review
+    action: approve
+    to: testing
+    condition:
+      - [not is_bug]
+      - [not high_priority]
+  - from: review
+    action: reject
+    to: development
+  - from: testing
+    action: pass_test
+    to: done
+  - from: testing
+    action: fail_test
+    to: development
