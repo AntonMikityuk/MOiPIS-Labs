@@ -1,10 +1,13 @@
 roles:
   - id: analyst
     title: Аналитик
+    
   - id: developer
     title: Разработчик
+    
   - id: tester
     title: Тестировщик
+    
   - id: pm
     title: Менеджер проекта
 
@@ -12,12 +15,15 @@ users:
   - id: anna
     name: Анна К.
     roles: [analyst, pm]
+    
   - id: ivan
     name: Иван С.
     roles: [developer]
+    
   - id: maria
     name: Мария П.
     roles: [tester]
+    
   - id: dmitry
     name: Дмитрий В.
     roles: [developer, tester]

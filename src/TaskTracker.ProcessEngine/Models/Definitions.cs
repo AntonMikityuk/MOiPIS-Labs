@@ -7,15 +7,29 @@ namespace TaskTracker.ProcessEngine.Models;
 /// </summary>
 public class ParameterDefinition
 {
-    /// <summary>Уникальный идентификатор параметра</summary>
+    /// <summary>
+    /// ID параметра
+    /// </summary>
     public string Id { get; set; } = "";
-    /// <summary>Отображаемое название параметра</summary>
+    
+    /// <summary>
+    /// Название параметра
+    /// </summary>
     public string Title { get; set; } = "";
-    /// <summary>Тип значения параметра (Integer, Decimal, String)</summary>
+    
+    /// <summary>
+    /// Тип значения параметра (Integer, Decimal, String)
+    /// </summary>
     public ParameterType Type { get; set; }
-    /// <summary>Минимально допустимое значение (null — без ограничения снизу)</summary>
+    
+    /// <summary>
+    /// Минимальное допустимое значение (null = без ограничения снизу)
+    /// </summary>
     public decimal? Min { get; set; }
-    /// <summary>Максимально допустимое значение (null — без ограничения сверху)</summary>
+    
+    /// <summary>
+    /// Максимальное допустимое значение (null = без ограничения сверху)
+    /// </summary>
     public decimal? Max { get; set; }
 }
 
@@ -24,13 +38,24 @@ public class ParameterDefinition
 /// </summary>
 public class ObjectClassDefinition
 {
-    /// <summary>Уникальный идентификатор класса</summary>
+    /// <summary>
+    /// ID класса
+    /// </summary>
     public string Id { get; set; } = "";
-    /// <summary>Отображаемое название класса</summary>
+    
+    /// <summary>
+    /// Название класса
+    /// </summary>
     public string Title { get; set; } = "";
-    /// <summary>Идентификатор родительского класса (null — корневой класс)</summary>
+    
+    /// <summary>
+    /// ID родительского класса (null = нет родителя)
+    /// </summary>
     public string? Parent { get; set; }
-    /// <summary>Собственные параметры класса (могут переопределять min/max родителя)</summary>
+    
+    /// <summary>
+    /// Собственные параметры класса (могут переопределять min/max родителя)
+    /// </summary>
     public List<ParameterDefinition> Parameters { get; set; } = new();
 }
 
@@ -39,7 +64,9 @@ public class ObjectClassDefinition
 /// </summary>
 public class ClassesFile
 {
-    /// <summary>Список всех определений классов</summary>
+    /// <summary>
+    /// Список всех определений классов
+    /// </summary>
     public List<ObjectClassDefinition> Classes { get; set; } = new();
 }
 
@@ -48,9 +75,14 @@ public class ClassesFile
 /// </summary>
 public class RoleDefinition
 {
-    /// <summary>Уникальный идентификатор роли</summary>
+    /// <summary>
+    /// ID роли
+    /// </summary>
     public string Id { get; set; } = "";
-    /// <summary>Отображаемое название роли</summary>
+    
+    /// <summary>
+    /// Название роли
+    /// </summary>
     public string Title { get; set; } = "";
 }
 
@@ -59,11 +91,19 @@ public class RoleDefinition
 /// </summary>
 public class UserDefinition
 {
-    /// <summary>Уникальный идентификатор пользователя</summary>
+    /// <summary>
+    /// ID пользователя
+    /// </summary>
     public string Id { get; set; } = "";
-    /// <summary>Имя пользователя</summary>
+    
+    /// <summary>
+    /// Имя пользователя
+    /// </summary>
     public string Name { get; set; } = "";
-    /// <summary>Список идентификаторов ролей пользователя</summary>
+    
+    /// <summary>
+    /// Список ID ролей пользователя
+    /// </summary>
     public List<string> Roles { get; set; } = new();
 }
 
@@ -72,9 +112,14 @@ public class UserDefinition
 /// </summary>
 public class UsersFile
 {
-    /// <summary>Список всех ролей</summary>
+    /// <summary>
+    /// Список всех ролей
+    /// </summary>
     public List<RoleDefinition> Roles { get; set; } = new();
-    /// <summary>Список всех пользователей</summary>
+    
+    /// <summary>
+    /// Список всех пользователей
+    /// </summary>
     public List<UserDefinition> Users { get; set; } = new();
 }
 
@@ -83,9 +128,14 @@ public class UsersFile
 /// </summary>
 public class ActionDefinition
 {
-    /// <summary>Уникальный идентификатор действия</summary>
+    /// <summary>
+    /// ID действия
+    /// </summary>
     public string Id { get; set; } = "";
-    /// <summary>Отображаемое название действия</summary>
+    
+    /// <summary>
+    /// Название действия
+    /// </summary>
     public string Title { get; set; } = "";
 }
 
@@ -94,15 +144,29 @@ public class ActionDefinition
 /// </summary>
 public class PredicateDefinition
 {
-    /// <summary>Уникальный идентификатор предиката</summary>
+    /// <summary>
+    /// ID предиката
+    /// </summary>
     public string Id { get; set; } = "";
-    /// <summary>Идентификатор параметра для проверки (null для предикатов класса)</summary>
+    
+    /// <summary>
+    /// ID параметра для проверки (null = предикаты класса)
+    /// </summary>
     public string? Parameter { get; set; }
-    /// <summary>Оператор сравнения: =, !=, &lt;, &lt;=, &gt;, &gt;=, filled, in_range</summary>
+    
+    /// <summary>
+    /// Оператор сравнения
+    /// </summary>
     public string? Operator { get; set; }
-    /// <summary>Значение для сравнения (null для filled/in_range)</summary>
+    
+    /// <summary>
+    /// Значение для сравнения (null = filled/in_range)
+    /// </summary>
     public object? Value { get; set; }
-    /// <summary>Идентификатор класса для предиката принадлежности (null для предикатов параметра)</summary>
+    
+    /// <summary>
+    /// ID класса для предиката принадлежности (null = предикаты параметра)
+    /// </summary>
     [YamlMember(Alias = "class")]
     public string? Class { get; set; }
 }
@@ -112,17 +176,34 @@ public class PredicateDefinition
 /// </summary>
 public class StateDefinition
 {
-    /// <summary>Уникальный идентификатор состояния</summary>
+    /// <summary>
+    /// ID состояния
+    /// </summary>
     public string Id { get; set; } = "";
-    /// <summary>Отображаемое название состояния</summary>
+    
+    /// <summary>
+    /// Отображаемое название состояния
+    /// </summary>
     public string Title { get; set; } = "";
-    /// <summary>Является ли состояние начальным</summary>
+    
+    /// <summary>
+    /// Является ли состояние начальным
+    /// </summary>
     public bool Initial { get; set; }
-    /// <summary>Является ли состояние конечным (из него нельзя перейти далее)</summary>
+    
+    /// <summary>
+    /// Является ли состояние конечным (из него нельзя перейти далее)
+    /// </summary>
     public bool Final { get; set; }
-    /// <summary>Роли, которым разрешены действия в этом состоянии</summary>
+    
+    /// <summary>
+    /// Роли, которым разрешены действия в этом состоянии
+    /// </summary>
     public List<string> Roles { get; set; } = new();
-    /// <summary>Разрешено ли редактирование параметров в этом состоянии</summary>
+    
+    /// <summary>
+    /// Разрешено ли редактирование параметров в этом состоянии
+    /// </summary>
     public bool EditParameters { get; set; }
 }
 
@@ -131,37 +212,71 @@ public class StateDefinition
 /// </summary>
 public class TransitionDefinition
 {
-    /// <summary>Исходное состояние перехода</summary>
+    /// <summary>
+    /// Исходное состояние перехода
+    /// </summary>
     [YamlMember(Alias = "from")]
     public string From { get; set; } = "";
-    /// <summary>Действие, инициирующее переход</summary>
+    
+    /// <summary>
+    /// Действие, инициирующее переход
+    /// </summary>
     public string Action { get; set; } = "";
-    /// <summary>Целевое состояние перехода</summary>
+    
+    /// <summary>
+    /// Целевое состояние перехода
+    /// </summary>
     public string To { get; set; } = "";
-    /// <summary>Условие в ДНФ: внешний список — дизъюнкция (ИЛИ), внутренний — конъюнкция (И) предикатов</summary>
+    
+    /// <summary>
+    /// Условие в ДНФ (внешний список = дизъюнкция, внутренний = конъюнкция предикатов
+    /// </summary>
     public List<List<string>>? Condition { get; set; }
 }
 
 /// <summary>
-/// Шаблон процесса — описывает жизненный цикл объектов определённого класса
+/// Шаблон процесса (описывает жизненный цикл объектов определённого класса)
 /// </summary>
 public class ProcessTemplateDefinition
 {
-    /// <summary>Уникальный идентификатор процесса</summary>
+    /// <summary>
+    /// ID процесса
+    /// </summary>
     public string Process { get; set; } = "";
-    /// <summary>Отображаемое название процесса</summary>
+    
+    /// <summary>
+    /// Название процесса
+    /// </summary>
     public string Title { get; set; } = "";
-    /// <summary>Класс объектов, к которому привязан шаблон</summary>
+    
+    /// <summary>
+    /// Класс объектов, к которому привязан шаблон
+    /// </summary>
     [YamlMember(Alias = "class")]
     public string Class { get; set; } = "";
-    /// <summary>Роли, которым разрешено создавать объекты по этому шаблону</summary>
+    
+    /// <summary>
+    /// Роли, которым разрешено создавать объекты по этому шаблону
+    /// </summary>
     public List<string> CreateRoles { get; set; } = new();
-    /// <summary>Набор действий, доступных в процессе</summary>
+    
+    /// <summary>
+    /// Набор действий, доступных в процессе
+    /// </summary>
     public List<ActionDefinition> Actions { get; set; } = new();
-    /// <summary>Набор предикатов для условий переходов</summary>
+    
+    /// <summary>
+    /// Набор предикатов для условий переходов
+    /// </summary>
     public List<PredicateDefinition> Predicates { get; set; } = new();
-    /// <summary>Набор состояний жизненного цикла</summary>
+    
+    /// <summary>
+    /// Набор состояний жизненного цикла
+    /// </summary>
     public List<StateDefinition> States { get; set; } = new();
-    /// <summary>Набор переходов между состояниями</summary>
+    
+    /// <summary>
+    /// Набор переходов между состояниями
+    /// </summary>
     public List<TransitionDefinition> Transitions { get; set; } = new();
 }

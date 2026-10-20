@@ -5,10 +5,18 @@ namespace TaskTracker.ProcessEngine.Models;
 /// </summary>
 public enum ParameterType
 {
-    /// <summary>Целое число</summary>
+    /// <summary>
+    /// Целое число
+    /// </summary>
     Integer,
-    /// <summary>Десятичное число</summary>
+    
+    /// <summary>
+    /// Десятичное число
+    /// </summary>
     Decimal,
-    /// <summary>Строка</summary>
+    
+    /// <summary>
+    /// Строка
+    /// </summary>
     String
 }

@@ -4,7 +4,7 @@ using TaskTracker.ProcessEngine.Runtime;
 namespace TaskTracker.ProcessEngine.Engine;
 
 /// <summary>
-/// Движок процессов — управляет жизненным циклом объектов по шаблонам
+/// Движок процессов (управляет жизненным циклом объектов по шаблонам)
 /// </summary>
 public class ProcessEngine
 {
@@ -23,7 +23,9 @@ public class ProcessEngine
         _evaluator = new ConditionEvaluator(classes);
     }
 
-    /// <summary>Создать новый объект процесса с проверкой роли, параметров и типов</summary>
+    /// <summary>
+    /// Создать новый объект процесса с проверкой роли, параметров и типов
+    /// </summary>
     public OperationResult CreateObject(string userId, string classId, Dictionary<string, object?>? initialValues)
     {
         var template = _templates.GetActingTemplate(classId);
@@ -67,7 +69,9 @@ public class ProcessEngine
         return OperationResult.Ok("Объект создан", obj);
     }
 
-    /// <summary>Выполнить действие над объектом: проверить роли, найти переход, вычислить условия в ДНФ</summary>
+    /// <summary>
+    /// Выполнить действие над объектом (проверить роли, найти переход, вычислить условия в ДНФ)
+    /// </summary>
     public OperationResult PerformAction(string userId, int objectId, string actionId)
     {
         var obj = GetObject(objectId);
@@ -102,7 +106,9 @@ public class ProcessEngine
         return OperationResult.Ok($"Переход в состояние '{tr.To}'", obj);
     }
 
-    /// <summary>Изменить значение параметра объекта с проверкой состояния, роли и типа</summary>
+    /// <summary>
+    /// Изменить значение параметра объекта с проверкой состояния, роли и типа
+    /// </summary>
     public OperationResult ModifyParameter(string userId, int objectId, string parameterId, object? value)
     {
         var obj = GetObject(objectId);
@@ -134,7 +140,9 @@ public class ProcessEngine
         return OperationResult.Ok("Параметр изменён", obj);
     }
 
-    /// <summary>Получить список доступных действий для пользователя в текущем состоянии объекта</summary>
+    /// <summary>
+    /// Получить список доступных действий для пользователя в текущем состоянии объекта
+    /// </summary>
     public List<ActionDefinition> GetAvailableActions(string userId, int objectId)
     {
         var obj = GetObject(objectId);
@@ -148,13 +156,19 @@ public class ProcessEngine
         return ids.Select(id => template.Actions.FirstOrDefault(a => a.Id == id) ?? new ActionDefinition { Id = id, Title = id }).ToList();
     }
 
-    /// <summary>Найти объект процесса по идентификатору</summary>
+    /// <summary>
+    /// Найти объект процесса по ID
+    /// </summary>
     public ProcessObject? GetObject(int objectId) => _objects.FirstOrDefault(o => o.Id == objectId);
 
-    /// <summary>Получить журнал истории операций над объектом</summary>
+    /// <summary>
+    /// Получить журнал истории операций над объектом
+    /// </summary>
     public List<HistoryEntry> GetHistory(int objectId) => GetObject(objectId)?.History ?? new();
 
-    /// <summary>Проверить соответствие значения указанному типу параметра</summary>
+    /// <summary>
+    /// Проверить соответствие значения указанному типу параметра
+    /// </summary>
     internal static bool ValidateType(ParameterType type, object value) => type switch
     {
         ParameterType.Integer => value is int or long or short or byte,

@@ -5,7 +5,7 @@ using TaskTracker.ProcessEngine.Runtime;
 namespace TaskTracker.ProcessEngine.Engine;
 
 /// <summary>
-/// Вычислитель предикатов и условий переходов в ДНФ
+/// Класс для вычислений предикатов и условий переходов в ДНФ
 /// </summary>
 public class ConditionEvaluator
 {
@@ -13,7 +13,9 @@ public class ConditionEvaluator
 
     public ConditionEvaluator(ClassRegistry classes) => _classes = classes;
 
-    /// <summary>Вычислить значение одного предиката для объекта</summary>
+    /// <summary>
+    /// Вычислить значение одного предиката для объекта
+    /// </summary>
     public bool EvaluatePredicate(PredicateDefinition pred, ProcessObject obj)
     {
         // Предикат принадлежности к классу
@@ -62,7 +64,9 @@ public class ConditionEvaluator
         };
     }
 
-    /// <summary>Вычислить условие в ДНФ: внешний список — дизъюнкция, внутренний — конъюнкция; префикс "not " отрицает предикат</summary>
+    /// <summary>
+    /// Вычислить условие в ДНФ (внешний список = дизъюнкция, внутренний = конъюнкция, "not" отрицает предикат)
+    /// </summary>
     public bool EvaluateCondition(List<List<string>>? condition,
         Dictionary<string, PredicateDefinition> predicateMap, ProcessObject obj)
     {
@@ -84,7 +88,9 @@ public class ConditionEvaluator
         return false;
     }
 
-    /// <summary>Попытаться преобразовать значение в decimal для числовых сравнений</summary>
+    /// <summary>
+    /// Попытаться преобразовать значение в decimal для числовых сравнений
+    /// </summary>
     internal static bool TryDecimal(object? v, out decimal d)
     {
         switch (v)

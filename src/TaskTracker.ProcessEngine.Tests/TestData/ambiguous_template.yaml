@@ -11,6 +11,7 @@ predicates:
   - id: has_title
     parameter: title
     operator: filled
+    
   - id: priority_in_range
     parameter: priority
     operator: in_range
@@ -21,9 +22,11 @@ states:
     initial: true
     roles: [analyst, pm]
     edit_parameters: true
+    
   - id: path_a
     title: Путь А
     final: true
+    
   - id: path_b
     title: Путь Б
     final: true
@@ -34,6 +37,7 @@ transitions:
     to: path_a
     condition:
       - [has_title]
+  
   - from: start
     action: proceed
     to: path_b
