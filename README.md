@@ -9,7 +9,9 @@
 
 Нужно сделать движок процессов — он исполняет жизненный цикл объектов по шаблону, который задаётся данными (YAML), а не кодом.
 
-Что должен уметь:
+**Дополнительное задание (3-1-1 Additional):** реализовать сервис-класс, который сам является конечным автоматом с очередью сообщений. Каждое сообщение содержит событие, по которому выполняется логика обработчика и (опционально) переход в другое состояние. Состояния, переходы и обработчики добавляются динамически в рантайме.
+
+Что должен уметь движок процессов:
 
 - Классы объектов описываются в YAML с наследованием параметров (паттерн Type Object).
 - Шаблон процесса задаёт состояния, действия, переходы с условиями в ДНФ и ограничениями по ролям.
@@ -79,9 +81,14 @@ Labs/
     │   │   └── ConditionEvaluator.cs           # Вычислитель предикатов и условий ДНФ
     │   ├── Runtime/
     │   │   └── Runtime.cs                      # ProcessObject, HistoryEntry, OperationResult
+    │   ├── Service/
+    │   │   ├── Message.cs                      # Сообщение (event + data)
+    │   │   └── StateMachineService.cs          # Сервис-КА с очередью сообщений
     │   └── YamlLoader.cs                       # Загрузка YAML-конфигурации
-    └── TaskTracker.ProcessEngine.Tests/        # xUnit-тесты (20 сценариев)
-        ├── ProcessEngineTests.cs
+    └── TaskTracker.ProcessEngine.Tests/        # xUnit-тесты (39 сценариев)
+        ├── ProcessEngineTests.cs               # 20 тестов движка процессов
+        ├── StateMachineServiceTests.cs         # 19 тестов сервиса-КА
+        ├── ServiceLogFixture.cs                # Фикстура логирования в файл
         └── TestData/
             ├── classes.yaml                    # 3 класса с наследованием
             ├── users.yaml                      # 4 роли, 4 пользователя
@@ -99,6 +106,8 @@ Labs/
 | Command | `ProcessEngine` (Create / Action / Modify) | Каждая операция проверяется, выполняется и записывается в журнал |
 | State | `StateDefinition`, `TransitionDefinition` | Состояния и переходы жизненного цикла, заданные данными шаблона |
 | Event Sourcing | `HistoryEntry`, `ProcessObject.History` | Хронологический журнал всех операций над объектом |
+| Observer | `StateMachineService.RegisterHandler` | Обработчики подписываются на события и вызываются при обработке сообщений |
+| Message Queue | `StateMachineService._queue` | Асинхронное взаимодействие через очередь сообщений (FIFO) |
 
 ## 4. UML-диаграммы
 
@@ -301,11 +310,13 @@ graph TB
             Models["Models/<br/>Definitions.cs<br/>ParameterType.cs"]
             Engine["Engine/<br/>ProcessEngine.cs<br/>Registries.cs<br/>ConditionEvaluator.cs"]
             Runtime["Runtime/<br/>Runtime.cs"]
+            Service["Service/<br/>StateMachineService.cs<br/>Message.cs"]
             YL["YamlLoader.cs"]
         end
         subgraph tests["TaskTracker.ProcessEngine.Tests"]
             PET["ProcessEngineTests.cs<br/>(20 сценариев)"]
-            TD["TestData/<br/>classes.yaml<br/>users.yaml<br/>task_lifecycle.yaml<br/>ambiguous_template.yaml"]
+            SMT["StateMachineServiceTests.cs<br/>(19 сценариев)"]
+            TD["TestData/<br/>classes.yaml, users.yaml<br/>task_lifecycle.yaml<br/>ambiguous_template.yaml"]
         end
     end
 
@@ -314,12 +325,14 @@ graph TB
     YL --> Models
     tests -.->|ProjectReference| lib
     PET --> TD
+    SMT --> Service
 
     YAML["YamlDotNet 16.3.0"]
     XUnit["xUnit 2.9.3 +<br/>Microsoft.NET.Test.Sdk"]
 
     YL --> YAML
     PET --> XUnit
+    SMT --> XUnit
 ```
 
 ### 4.4 Диаграмма последовательности
@@ -463,9 +476,85 @@ transitions:
 - **UserRegistry** — хранит пользователей. Главный метод `HasAnyRole` — проверяет, есть ли у пользователя хотя бы одна из нужных ролей.
 - **TemplateRegistry** — хранит шаблоны процессов. Для каждого класса ищет подходящий шаблон вверх по цепочке наследования (`GetActingTemplate`).
 
-## 6. Тестирование
+## 6. Сервис-конечный автомат (3-1-1 Additional)
 
-Написано 20 тестов на xUnit, покрывающих основные сценарии:
+### 6.1 Описание
+
+`StateMachineService` — сервис-класс, который сам является конечным автоматом с очередью сообщений. В отличие от `ProcessEngine` (который управляет *внешними* объектами по YAML-шаблонам), `StateMachineService` — это сам автомат: он хранит своё состояние, принимает сообщения в очередь и обрабатывает их.
+
+Ключевые возможности:
+- **Очередь сообщений (FIFO)** — сообщения (`Message`) добавляются через `Enqueue` и обрабатываются по порядку.
+- **Обработчики событий** — регистрируются через `RegisterHandler`, выполняют бизнес-логику и могут менять данные сервиса (`Data`).
+- **Переходы состояний** — регистрируются через `AddTransition`, выполняются автоматически при обработке сообщения.
+- **Динамическая конфигурация** — состояния, переходы и обработчики можно добавлять в любой момент, в том числе после старта.
+- **Логирование** — каждое действие логируется через callback `Action<string>` с подробным описанием: какие состояния, что в очереди, что изменилось в данных.
+
+Обработчик и переход — независимые механизмы. Обработчик выполняет логику, переход меняет состояние. Они могут работать вместе, по отдельности или отсутствовать — любая комбинация допустима.
+
+### 6.2 Диаграмма классов
+
+```mermaid
+classDiagram
+    class StateMachineService {
+        +string? CurrentState
+        +int QueueCount
+        +IReadOnlyCollection~string~ States
+        +Dictionary~string, object?~ Data
+        +AddState(stateId)
+        +SetInitialState(stateId)
+        +AddTransition(from, eventId, to)
+        +RegisterHandler(eventId, handler)
+        +Enqueue(message)
+        +ProcessNext() bool
+        +ProcessAll() int
+    }
+    class Message {
+        +string Event
+        +object? Data
+        +Message(event, data?)
+    }
+
+    StateMachineService "1" o-- "*" Message : очередь
+    StateMachineService --> Message : обрабатывает
+```
+
+### 6.3 Пример использования
+
+```csharp
+var svc = new StateMachineService(msg => Console.WriteLine(msg));
+
+// Конфигурация автомата
+svc.AddState("idle");
+svc.AddState("working");
+svc.AddState("done");
+svc.SetInitialState("idle");
+svc.AddTransition("idle", "start", "working");
+svc.AddTransition("working", "finish", "done");
+
+// Обработчики меняют данные сервиса
+svc.RegisterHandler("start", msg =>
+{
+    svc.Data["assignee"] = "ivan";
+    svc.Data["progress"] = "в работе";
+});
+svc.RegisterHandler("finish", msg =>
+{
+    svc.Data["progress"] = "завершено";
+    svc.Data["result"] = "success";
+});
+
+// Отправка и обработка сообщений
+svc.Enqueue(new Message("start"));
+svc.Enqueue(new Message("finish"));
+svc.ProcessAll();
+// Состояние: "done", Data: {assignee=ivan, progress=завершено, result=success}
+```
+
+## 7. Тестирование
+
+Всего 39 тестов на xUnit (20 для ProcessEngine + 19 для StateMachineService).
+
+### 7.1 Тесты ProcessEngine (20 сценариев)
 
 | Категория | Сценарии | Количество |
 |-----------|----------|-----------|
@@ -482,13 +571,32 @@ transitions:
 | История операций | Запись всех типов операций (Create, ModifyParameter, Action) | 1 |
 | Доступные действия | GetAvailableActions возвращает корректный список для роли | 1 |
 
+### 7.2 Тесты StateMachineService (19 сценариев)
+
+| Категория | Сценарии | Количество |
+|-----------|----------|-----------|
+| Регистрация состояний | Добавление, дубликат выбрасывает исключение | 2 |
+| Начальное состояние | Установка, попытка установить несуществующее | 2 |
+| Переходы | Недопустимое исходное/целевое состояние | 2 |
+| Обработка с обработчиком | Обработчик + переход, обработчик без перехода | 2 |
+| Обработка без обработчика | Переход без обработчика, пустая очередь | 2 |
+| ProcessAll | Несколько сообщений подряд, пустая очередь | 2 |
+| Данные сообщения | Обработчик получает Data и записывает в хранилище сервиса | 1 |
+| Неизвестное событие | Состояние не меняется | 1 |
+| Динамическая конфигурация | Добавление состояний/переходов/обработчиков в рантайме | 2 |
+| Очередь FIFO | Порядок обработки совпадает с порядком добавления | 1 |
+| Счётчик очереди | QueueCount корректно отражает размер | 1 |
+| Замена обработчика | Повторная регистрация заменяет предыдущий | 1 |
+
+Логи тестов записываются в `bin/Debug/net9.0/service-tests.log` с разделителями `--- Тест N ---` и подробным описанием каждого действия (добавление состояний, содержимое очереди, изменение данных до/после обработчика).
+
 Запуск:
 
 ```
 dotnet test src/TaskTracker.ProcessEngine.Tests
 ```
 
-## 7. Сборка и запуск
+## 8. Сборка и запуск
 
 **Требования**: .NET SDK 9.0
 
@@ -501,6 +609,11 @@ dotnet test src/TaskTracker.ProcessEngine.Tests
 
 # Запуск тестов с подробным выводом
 dotnet test src/TaskTracker.ProcessEngine.Tests --verbosity normal
+```
+
+После запуска тестов лог StateMachineService доступен по пути:
+```
+src/TaskTracker.ProcessEngine.Tests/bin/Debug/net9.0/service-tests.log
 ```
 
 Из внешних зависимостей — только YamlDotNet (парсинг YAML) и xUnit (тесты). Всё ставится автоматически через NuGet при сборке.
