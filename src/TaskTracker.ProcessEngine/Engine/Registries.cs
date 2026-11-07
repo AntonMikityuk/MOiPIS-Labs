@@ -1,3 +1,4 @@
+using System.Globalization;
 using TaskTracker.ProcessEngine.Models;
 
 namespace TaskTracker.ProcessEngine.Engine;
@@ -9,31 +10,19 @@ public class ClassRegistry
 {
     private readonly Dictionary<string, ObjectClassDefinition> _classes = new();
 
-    /// <summary>
-    /// Загрузить определения классов из файла
-    /// </summary>
     public void Load(ClassesFile file)
     {
-        foreach (var c in file.Classes) 
+        foreach (var c in file.Classes)
             _classes[c.Id] = c;
     }
 
-    /// <summary>
-    /// Получить определение класса по ID
-    /// </summary>
     public ObjectClassDefinition GetClass(string classId) =>
-        _classes.TryGetValue(classId, out var c) 
+        _classes.TryGetValue(classId, out var c)
             ? c
             : throw new KeyNotFoundException($"Класс '{classId}' не найден");
 
-    /// <summary>
-    /// Проверить существование класса в реестре
-    /// </summary>
     public bool Exists(string classId) => _classes.ContainsKey(classId);
 
-    /// <summary>
-    /// Построить цепочку наследования от данного класса до корневого
-    /// </summary>
     public List<string> GetInheritanceChain(string classId)
     {
         var chain = new List<string>();
@@ -47,14 +36,11 @@ public class ClassRegistry
         return chain;
     }
 
-    /// <summary>
-    /// Проверить, принадлежит ли объект классу или его потомку
-    /// </summary>
     public bool IsOfClass(string objectClassId, string classId) =>
         Exists(objectClassId) && GetInheritanceChain(objectClassId).Contains(classId);
 
     /// <summary>
-    /// Вычислить эффективные параметры класса с учётом наследования (потомок переопределяет min/max)
+    /// Вычислить эффективные параметры класса с учётом наследования
     /// </summary>
     public List<ParameterDefinition> GetEffectiveParameters(string classId)
     {
@@ -66,14 +52,14 @@ public class ClassRegistry
                 var idx = result.FindIndex(x => x.Id == p.Id);
                 if (idx >= 0)
                 {
-                    // Тип наследуется от родителя, min/max переопределяются потомком
                     result[idx] = new ParameterDefinition
                     {
                         Id = p.Id,
                         Title = p.Title,
                         Type = result[idx].Type,
                         Min = p.Min,
-                        Max = p.Max
+                        Max = p.Max,
+                        Default = p.Default
                     };
                 }
                 else result.Add(p);
@@ -90,53 +76,93 @@ public class UserRegistry
 {
     private readonly Dictionary<string, UserDefinition> _users = new();
 
-    /// <summary>
-    /// Загрузить определения пользователей из файла
-    /// </summary>
     public void Load(UsersFile file)
     {
         foreach (var u in file.Users) _users[u.Id] = u;
     }
 
-    /// <summary>
-    /// Получить определение пользователя по ID
-    /// </summary>
     public UserDefinition GetUser(string userId) =>
-        _users.TryGetValue(userId, out var u) 
+        _users.TryGetValue(userId, out var u)
             ? u
             : throw new KeyNotFoundException($"Пользователь '{userId}' не найден");
 
-    /// <summary>
-    /// Проверить, есть ли у пользователя хотя бы одна из указанных ролей
-    /// </summary>
     public bool HasAnyRole(string userId, List<string> roleIds) =>
         _users.TryGetValue(userId, out var u) && u.Roles.Any(roleIds.Contains);
+
+    public bool Exists(string userId) => _users.ContainsKey(userId);
 }
 
 /// <summary>
-/// Реестр шаблонов процессов с поиском действующего шаблона вверх по иерархии классов
+/// Реестр шаблонов процессов (привязка строго к указанному классу, без наследования)
 /// </summary>
 public class TemplateRegistry
 {
-    private readonly ClassRegistry _classes;
     private readonly Dictionary<string, ProcessTemplateDefinition> _byClass = new();
 
-    public TemplateRegistry(ClassRegistry classes) => _classes = classes;
+    public TemplateRegistry() { }
 
-    /// <summary>
-    /// Зарегистрировать шаблон процесса для его класса
-    /// </summary>
     public void Load(ProcessTemplateDefinition template) => _byClass[template.Class] = template;
 
     /// <summary>
-    /// Найти действующий шаблон (ближайший вверх по цепочке наследования классов)
+    /// Найти шаблон строго по классу объекта (шаблоны не наследуются)
     /// </summary>
-    public ProcessTemplateDefinition? GetActingTemplate(string classId)
+    public ProcessTemplateDefinition? GetActingTemplate(string classId) =>
+        _byClass.TryGetValue(classId, out var t) ? t : null;
+}
+
+/// <summary>
+/// Реестр готовых объектов из конфигурации с подстановкой значений по умолчанию
+/// </summary>
+public class ObjectRegistry
+{
+    private readonly Dictionary<string, ObjectDefinition> _objects = new();
+
+    /// <summary>
+    /// Загрузить объекты и применить default-значения из описания классов
+    /// </summary>
+    public void Load(ObjectsFile file, ClassRegistry classes)
     {
-        if (!_classes.Exists(classId)) return null;
-        foreach (var id in _classes.GetInheritanceChain(classId))
-            if (_byClass.TryGetValue(id, out var t))
-                return t;
-        return null;
+        foreach (var raw in file.Objects)
+        {
+            var effective = classes.GetEffectiveParameters(raw.Class);
+            var values = new Dictionary<string, object?>();
+
+            foreach (var param in effective)
+            {
+                object? rawVal;
+                if (raw.Values != null && raw.Values.ContainsKey(param.Id))
+                    rawVal = raw.Values[param.Id];
+                else if (param.Default != null)
+                    rawVal = param.Default;
+                else
+                    continue;
+
+                values[param.Id] = CoerceValue(rawVal, param.Type);
+            }
+
+            _objects[raw.Id] = new ObjectDefinition
+            {
+                Id = raw.Id,
+                Class = raw.Class,
+                Values = values
+            };
+        }
     }
+
+    private static object? CoerceValue(object? value, ParameterType type)
+    {
+        if (value == null) return null;
+        return type switch
+        {
+            ParameterType.Integer => Convert.ToInt32(value, CultureInfo.InvariantCulture),
+            ParameterType.Decimal => Convert.ToDecimal(value, CultureInfo.InvariantCulture),
+            ParameterType.String => Convert.ToString(value, CultureInfo.InvariantCulture),
+            _ => value
+        };
+    }
+
+    public ObjectDefinition? GetObject(string objectId) =>
+        _objects.TryGetValue(objectId, out var obj) ? obj : null;
+
+    public bool Exists(string objectId) => _objects.ContainsKey(objectId);
 }

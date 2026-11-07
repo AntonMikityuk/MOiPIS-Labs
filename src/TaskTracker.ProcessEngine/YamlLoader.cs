@@ -31,4 +31,9 @@ public static class YamlLoader
     /// Загрузить шаблон процесса из YAML
     /// </summary>
     public static ProcessTemplateDefinition LoadTemplate(string yaml) => CreateDeserializer().Deserialize<ProcessTemplateDefinition>(yaml);
+
+    /// <summary>
+    /// Загрузить готовые объекты из YAML
+    /// </summary>
+    public static ObjectsFile LoadObjects(string yaml) => CreateDeserializer().Deserialize<ObjectsFile>(yaml);
 }

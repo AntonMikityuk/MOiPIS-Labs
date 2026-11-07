@@ -1,13 +1,12 @@
 using TaskTracker.ProcessEngine;
 using TaskTracker.ProcessEngine.Engine;
-using TaskTracker.ProcessEngine.Runtime;
 using PEngine = TaskTracker.ProcessEngine.Engine.ProcessEngine;
 
 namespace TaskTracker.ProcessEngine.Tests;
 
-public class TestFixture
+public class ProcessEngineTests
 {
-    public static (PEngine engine, ClassRegistry classes, UserRegistry users, TemplateRegistry templates)
+    private static (PEngine engine, ClassRegistry classes, ObjectRegistry objects, MemoryLog log)
         SetupEngine(string? templateOverride = null)
     {
         var basePath = Path.Combine(AppContext.BaseDirectory, "TestData");
@@ -15,259 +14,303 @@ public class TestFixture
         classRegistry.Load(YamlLoader.LoadClasses(File.ReadAllText(Path.Combine(basePath, "classes.yaml"))));
         var userRegistry = new UserRegistry();
         userRegistry.Load(YamlLoader.LoadUsers(File.ReadAllText(Path.Combine(basePath, "users.yaml"))));
-        var templateRegistry = new TemplateRegistry(classRegistry);
+        var objectRegistry = new ObjectRegistry();
+        objectRegistry.Load(YamlLoader.LoadObjects(File.ReadAllText(Path.Combine(basePath, "objects.yaml"))), classRegistry);
+        var templateRegistry = new TemplateRegistry();
         var templateFile = templateOverride ?? "task_lifecycle.yaml";
         templateRegistry.Load(YamlLoader.LoadTemplate(File.ReadAllText(Path.Combine(basePath, templateFile))));
-        var engine = new PEngine(classRegistry, userRegistry, templateRegistry);
-        return (engine, classRegistry, userRegistry, templateRegistry);
-    }
-}
-
-public class ProcessEngineTests
-{
-    private static Dictionary<string, object?> Full(int priority, object hours) => new()
-    {
-        ["title"] = "T",
-        ["description"] = "D",
-        ["priority"] = priority,
-        ["estimated_hours"] = hours
-    };
-
-    private static void Do(PEngine e, string user, int id, string action)
-    {
-        var r = e.PerformAction(user, id, action);
-        Assert.True(r.Success, $"{action} by {user}: {r.Message}");
+        var log = new MemoryLog();
+        var engine = new PEngine(classRegistry, userRegistry, templateRegistry, objectRegistry, log);
+        return (engine, classRegistry, objectRegistry, log);
     }
 
-    private static int Create(PEngine e, string cls, Dictionary<string, object?>? vals, string user = "anna")
+    private static void Do(PEngine e, string user, string objectId, string action)
     {
-        var r = e.CreateObject(user, cls, vals);
-        Assert.True(r.Success, r.Message);
-        return r.Object!.Id;
+        var r = e.Act(user, objectId, action);
+        Assert.True(r.Success, $"{action} by {user} on {objectId}: {r.Message}");
     }
 
-    private static int ToReview(PEngine e, string cls, Dictionary<string, object?> vals)
+    private static void ToReview(PEngine e, string objectId)
     {
-        var id = Create(e, cls, vals);
-        Do(e, "anna", id, "analyze");
-        Do(e, "anna", id, "start_dev");
-        Do(e, "ivan", id, "submit_review");
-        return id;
+        Assert.True(e.Start("anna", objectId).Success);
+        Do(e, "anna", objectId, "analyze");
+        Do(e, "anna", objectId, "start_dev");
+        Do(e, "ivan", objectId, "submit_review");
     }
 
+    /// <summary>
+    /// Полный путь быстрого трека: приоритет высокий + малая задача → сразу done, минуя тестирование
+    /// task-1: priority=2, estimated_hours=3
+    /// </summary>
     [Fact]
-    public void BugFastTrack_FullLifecycle()
+    public void FullPath_FastTrack_ToDone()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "bug", new()
-        {
-            ["title"] = "NPE", ["description"] = "crash", ["priority"] = 1,
-            ["estimated_hours"] = 4, ["severity"] = 3
-        });
-        Do(e, "anna", id, "analyze");
-        Do(e, "anna", id, "start_dev");
-        Do(e, "ivan", id, "submit_review");
-        Do(e, "ivan", id, "approve");
-        Assert.Equal("done", e.GetObject(id)!.CurrentState);
-        Assert.Equal(5, e.GetHistory(id).Count);
+        var (e, _, _, log) = SetupEngine();
+        ToReview(e, "task-1");
+        Do(e, "ivan", "task-1", "approve");
+        Assert.Equal("done", e.GetProcess("task-1")!.CurrentState);
+        Assert.Equal(5, log.Entries.Count);
+        Assert.True(log.Entries.All(entry => entry.Result == "accepted"));
     }
 
+    /// <summary>
+    /// Полный путь обычного трека: приоритет 3, оценка 10ч → через тестирование
+    /// task-normal: priority=3, estimated_hours=10
+    /// </summary>
     [Fact]
-    public void Feature_NormalPath_FullLifecycle()
+    public void FullPath_NormalRoute_ThroughTesting()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "feature", new()
-        {
-            ["title"] = "Dark mode", ["description"] = "add dark theme", ["priority"] = 3,
-            ["estimated_hours"] = 20, ["story_points"] = 8
-        });
-        Do(e, "anna", id, "analyze");
-        Do(e, "anna", id, "start_dev");
-        Do(e, "ivan", id, "submit_review");
-        Do(e, "ivan", id, "approve");
-        Assert.Equal("testing", e.GetObject(id)!.CurrentState);
-        Do(e, "maria", id, "pass_test");
-        Assert.Equal("done", e.GetObject(id)!.CurrentState);
-        Assert.Equal(6, e.GetHistory(id).Count);
+        var (e, _, _, _) = SetupEngine();
+        ToReview(e, "task-normal");
+        Do(e, "ivan", "task-normal", "approve");
+        Assert.Equal("testing", e.GetProcess("task-normal")!.CurrentState);
+        Do(e, "maria", "task-normal", "pass_test");
+        Assert.Equal("done", e.GetProcess("task-normal")!.CurrentState);
     }
 
+    /// <summary>
+    /// Возврат с ревью на доработку и повторная отправка
+    /// </summary>
     [Fact]
-    public void RejectFromReview_ReturnToDev()
+    public void ReturnFromReview_BackToDevelopment()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = ToReview(e, "task", Full(3, 5));
-        Do(e, "ivan", id, "reject");
-        Assert.Equal("development", e.GetObject(id)!.CurrentState);
-        Do(e, "ivan", id, "submit_review");
-        Assert.Equal("review", e.GetObject(id)!.CurrentState);
+        var (e, _, _, _) = SetupEngine();
+        ToReview(e, "task-1");
+        Do(e, "ivan", "task-1", "reject");
+        Assert.Equal("development", e.GetProcess("task-1")!.CurrentState);
+        Do(e, "ivan", "task-1", "submit_review");
+        Assert.Equal("review", e.GetProcess("task-1")!.CurrentState);
     }
 
+    /// <summary>
+    /// Отказ пользователю без нужной роли (тестировщик пытается выполнить действие аналитика)
+    /// </summary>
     [Fact]
-    public void FailTest_ReturnToDev()
+    public void ActionWithoutRole_Rejected()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = ToReview(e, "feature", Full(3, 5));
-        Do(e, "ivan", id, "approve");
-        Do(e, "maria", id, "fail_test");
-        Assert.Equal("development", e.GetObject(id)!.CurrentState);
+        var (e, _, _, _) = SetupEngine();
+        e.Start("anna", "task-1");
+        var r = e.Act("maria", "task-1", "analyze");
+        Assert.False(r.Success);
+        Assert.Contains("роль", r.Message);
+        Assert.Equal("backlog", e.GetProcess("task-1")!.CurrentState);
     }
 
+    /// <summary>
+    /// Отказ при невыполненном условии перехода: нет описания → start_dev запрещён
+    /// </summary>
     [Fact]
-    public void CancelFromBacklog()
+    public void ConditionNotMet_Rejected()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", null);
-        Do(e, "anna", id, "cancel");
-        Assert.Equal("cancelled", e.GetObject(id)!.CurrentState);
-        Assert.False(e.PerformAction("anna", id, "analyze").Success);
+        var (e, _, _, _) = SetupEngine();
+        e.Start("anna", "task-no-desc");
+        Do(e, "anna", "task-no-desc", "analyze");
+        var r = e.Act("anna", "task-no-desc", "start_dev");
+        Assert.False(r.Success);
+        Assert.Contains("Условие", r.Message);
+        Assert.Equal("analysis", e.GetProcess("task-no-desc")!.CurrentState);
     }
 
+    /// <summary>
+    /// Наследование: баг переопределяет диапазон priority (max=3 вместо max=5 у task)
+    /// </summary>
     [Fact]
-    public void BugInheritsTaskTemplate()
+    public void InheritanceOverridesParameterRange()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "bug", null);
-        Assert.Equal("backlog", e.GetObject(id)!.CurrentState);
+        var (_, classes, _, _) = SetupEngine();
+        var taskParams = classes.GetEffectiveParameters("task");
+        var bugParams = classes.GetEffectiveParameters("bug");
+        var taskPriority = taskParams.First(p => p.Id == "priority");
+        var bugPriority = bugParams.First(p => p.Id == "priority");
+        Assert.Equal(5m, taskPriority.Max);
+        Assert.Equal(3m, bugPriority.Max);
+        Assert.Equal(taskPriority.Min, bugPriority.Min);
     }
 
-    [Fact]
-    public void BugOverriddenPriorityRange()
-    {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "bug", Full(4, 5));
-        Do(e, "anna", id, "analyze");
-        var fail = e.PerformAction("anna", id, "start_dev");
-        Assert.False(fail.Success);
-        Assert.True(e.ModifyParameter("anna", id, "priority", 2).Success);
-        Do(e, "anna", id, "start_dev");
-        Assert.Equal("development", e.GetObject(id)!.CurrentState);
-    }
-
+    /// <summary>
+    /// Наследование: фича наследует параметры task и добавляет story_points
+    /// </summary>
     [Fact]
     public void FeatureInheritsAndAddsParams()
     {
-        var (e, classes, _, _) = TestFixture.SetupEngine();
-        var r = e.CreateObject("anna", "feature", new() { ["story_points"] = 8 });
-        Assert.True(r.Success);
-        var ids = classes.GetEffectiveParameters("feature").Select(p => p.Id).ToList();
-        foreach (var x in new[] { "title", "description", "priority", "estimated_hours", "story_points" })
-            Assert.Contains(x, ids);
+        var (_, classes, _, _) = SetupEngine();
+        var featureParams = classes.GetEffectiveParameters("feature").Select(p => p.Id).ToList();
+        foreach (var p in new[] { "title", "description", "priority", "estimated_hours", "story_points" })
+            Assert.Contains(p, featureParams);
     }
 
+    /// <summary>
+    /// Значения по умолчанию подставляются при отсутствии поля в объекте:
+    /// task-minimal не задаёт priority и estimated_hours → получает default (3 и 8)
+    /// </summary>
     [Fact]
-    public void ConditionNotMet_StartDevFails()
+    public void DefaultValuesApplied()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", new() { ["title"] = "T", ["priority"] = 3, ["estimated_hours"] = 5 });
-        Do(e, "anna", id, "analyze");
-        Assert.False(e.PerformAction("anna", id, "start_dev").Success);
-        Assert.Equal("analysis", e.GetObject(id)!.CurrentState);
+        var (_, _, objects, _) = SetupEngine();
+        var obj = objects.GetObject("task-minimal")!;
+        Assert.Equal(3, obj.Values!["priority"]);
+        Assert.Equal(8m, obj.Values!["estimated_hours"]);
+        Assert.False(obj.Values!.ContainsKey("title"));
     }
 
+    /// <summary>
+    /// Явный null не заменяется default: priority: null при default: 3 → остаётся null
+    /// </summary>
     [Fact]
-    public void NullValue_PredicateFalse()
+    public void ExplicitNull_NotReplacedByDefault()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", null);
-        Do(e, "anna", id, "analyze");
-        Assert.False(e.PerformAction("anna", id, "start_dev").Success);
+        var (_, _, objects, _) = SetupEngine();
+        var obj = objects.GetObject("task-explicit-null")!;
+        Assert.Null(obj.Values!["priority"]);
+        Assert.Equal(4m, obj.Values!["estimated_hours"]);
     }
 
+    /// <summary>
+    /// Лог содержит записи успешных команд и отказов с корректными полями
+    /// </summary>
     [Fact]
-    public void CreateWithoutRole_Fails()
+    public void LogRecordsSuccessesAndRejections()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        Assert.False(e.CreateObject("ivan", "task", null).Success);
+        var (e, _, _, log) = SetupEngine();
+        e.Start("anna", "task-1");
+        e.Act("anna", "task-1", "analyze");
+        e.Act("maria", "task-1", "analyze");
+
+        Assert.Equal(3, log.Entries.Count);
+        var start = log.Entries[0];
+        Assert.Equal("accepted", start.Result);
+        Assert.Equal("anna", start.User);
+        Assert.Equal("task-1", start.Object);
+        Assert.Null(start.StateBefore);
+        Assert.Equal("backlog", start.StateAfter);
+        Assert.Null(start.Reason);
+
+        var success = log.Entries[1];
+        Assert.Equal("accepted", success.Result);
+        Assert.Equal("backlog", success.StateBefore);
+        Assert.Equal("analysis", success.StateAfter);
+
+        var reject = log.Entries[2];
+        Assert.Equal("rejected", reject.Result);
+        Assert.Equal("analysis", reject.StateBefore);
+        Assert.Equal("analysis", reject.StateAfter);
+        Assert.NotNull(reject.Reason);
     }
 
+    /// <summary>
+    /// Отказ не меняет состояние процесса
+    /// </summary>
     [Fact]
-    public void ActionWithoutRole_Fails()
+    public void RejectionDoesNotChangeState()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", null);
-        Assert.False(e.PerformAction("ivan", id, "analyze").Success);
+        var (e, _, _, _) = SetupEngine();
+        e.Start("anna", "task-no-desc");
+        Do(e, "anna", "task-no-desc", "analyze");
+        Assert.Equal("analysis", e.GetProcess("task-no-desc")!.CurrentState);
+        e.Act("anna", "task-no-desc", "start_dev");
+        Assert.Equal("analysis", e.GetProcess("task-no-desc")!.CurrentState);
     }
 
+    /// <summary>
+    /// Повторный запуск процесса над тем же объектом отклоняется
+    /// </summary>
     [Fact]
-    public void ActionInFinalState_Fails()
+    public void DuplicateStart_Rejected()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", null);
-        Do(e, "anna", id, "cancel");
-        var r = e.PerformAction("anna", id, "analyze");
+        var (e, _, _, _) = SetupEngine();
+        Assert.True(e.Start("anna", "task-1").Success);
+        var r = e.Start("anna", "task-1");
         Assert.False(r.Success);
-        Assert.Contains("конечном", r.Message);
+        Assert.Contains("уже запущен", r.Message);
     }
 
+    /// <summary>
+    /// Действие в конечном состоянии отклоняется
+    /// </summary>
     [Fact]
-    public void ModifyParameterForbidden_Fails()
+    public void ActionInFinalState_Rejected()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", Full(3, 5));
-        Do(e, "anna", id, "analyze");
-        Do(e, "anna", id, "start_dev");
-        Assert.False(e.ModifyParameter("ivan", id, "title", "X").Success);
+        var (e, _, _, _) = SetupEngine();
+        e.Start("anna", "task-1");
+        Do(e, "anna", "task-1", "cancel");
+        Assert.Equal("cancelled", e.GetProcess("task-1")!.CurrentState);
+        var r = e.Act("anna", "task-1", "analyze");
+        Assert.False(r.Success);
+        Assert.Contains("завершён", r.Message);
     }
 
+    /// <summary>
+    /// Запуск процесса пользователем без роли create_roles отклоняется
+    /// </summary>
     [Fact]
-    public void ModifyParameterWrongType_Fails()
+    public void StartWithoutRole_Rejected()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", null);
-        Assert.False(e.ModifyParameter("anna", id, "priority", "not_a_number").Success);
+        var (e, _, _, _) = SetupEngine();
+        var r = e.Start("ivan", "task-1");
+        Assert.False(r.Success);
+        Assert.Contains("роли", r.Message);
     }
 
+    /// <summary>
+    /// ДНФ: обе группы второго условия — OR между [not high_priority] и [not small_task]
+    /// task-normal (priority=3, hours=10): оба дизъюнкта истинны → переход в testing
+    /// </summary>
     [Fact]
-    public void ModifyParameterWrongRole_Fails()
+    public void DnfOrBranches_BothGroupsTrue()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", null);
-        Assert.False(e.ModifyParameter("ivan", id, "title", "X").Success);
+        var (e, _, _, _) = SetupEngine();
+        ToReview(e, "task-normal");
+        Do(e, "ivan", "task-normal", "approve");
+        Assert.Equal("testing", e.GetProcess("task-normal")!.CurrentState);
     }
 
+    /// <summary>
+    /// Неоднозначные переходы: условия обоих переходов истинны → ошибка шаблона
+    /// task-1 имеет title и priority в диапазоне → оба перехода ambiguous_template матчатся
+    /// </summary>
     [Fact]
-    public void AmbiguousTransitions_Fails()
+    public void AmbiguousTransitions_Error()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine("ambiguous_template.yaml");
-        var id = Create(e, "task", new() { ["title"] = "test", ["priority"] = 3 });
-        var r = e.PerformAction("anna", id, "proceed");
+        var (e, _, _, _) = SetupEngine("ambiguous_template.yaml");
+        e.Start("anna", "task-1");
+        var r = e.Act("anna", "task-1", "proceed");
         Assert.False(r.Success);
         Assert.Contains("шаблона", r.Message);
     }
 
+    /// <summary>
+    /// Класс IsOfClass: баг является подклассом task
+    /// </summary>
     [Fact]
-    public void CreateWithInvalidParameter_Fails()
+    public void ClassPredicate_BugIsOfClassTask()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        Assert.False(e.CreateObject("anna", "task", new() { ["nonexistent"] = 1 }).Success);
+        var (_, classes, _, _) = SetupEngine();
+        Assert.True(classes.IsOfClass("bug", "task"));
+        Assert.True(classes.IsOfClass("feature", "task"));
+        Assert.False(classes.IsOfClass("task", "bug"));
     }
 
+    /// <summary>
+    /// Запуск процесса для объекта без шаблона (bug-1 — нет шаблона для класса bug)
+    /// </summary>
     [Fact]
-    public void HistoryRecordsAllOperations()
+    public void StartWithoutTemplate_Rejected()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", null);
-        Assert.True(e.ModifyParameter("anna", id, "title", "Hello").Success);
-        Do(e, "anna", id, "analyze");
-        var h = e.GetHistory(id);
-        Assert.Equal(3, h.Count);
-        Assert.Equal(OperationType.Create, h[0].Operation);
-        Assert.Equal(OperationType.ModifyParameter, h[1].Operation);
-        Assert.Equal(OperationType.Action, h[2].Operation);
-        Assert.All(h, x => Assert.Equal("anna", x.UserId));
-        Assert.Contains("title", h[1].Details);
-        Assert.Contains("Hello", h[1].Details);
-        Assert.Equal("analysis", h[2].NewState);
-        Assert.Contains("analyze", h[2].Details);
+        var (e, _, _, _) = SetupEngine();
+        var r = e.Start("anna", "bug-1");
+        Assert.False(r.Success);
+        Assert.Contains("нет шаблона", r.Message);
     }
 
+    /// <summary>
+    /// Запуск процесса для несуществующего объекта отклоняется
+    /// </summary>
     [Fact]
-    public void GetAvailableActions_ReturnsCorrectActions()
+    public void StartNonExistentObject_Rejected()
     {
-        var (e, _, _, _) = TestFixture.SetupEngine();
-        var id = Create(e, "task", null);
-        var a = e.GetAvailableActions("anna", id).Select(x => x.Id).OrderBy(x => x).ToList();
-        Assert.Equal(new[] { "analyze", "cancel" }, a);
-        Assert.Empty(e.GetAvailableActions("ivan", id));
+        var (e, _, _, _) = SetupEngine();
+        var r = e.Start("anna", "nonexistent");
+        Assert.False(r.Success);
+        Assert.Contains("не найден", r.Message);
     }
 }

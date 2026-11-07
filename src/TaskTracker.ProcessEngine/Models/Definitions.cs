@@ -31,6 +31,11 @@ public class ParameterDefinition
     /// Максимальное допустимое значение (null = без ограничения сверху)
     /// </summary>
     public decimal? Max { get; set; }
+
+    /// <summary>
+    /// Значение по умолчанию (подставляется при отсутствии поля в объекте; явный null не заменяется)
+    /// </summary>
+    public object? Default { get; set; }
 }
 
 /// <summary>
@@ -201,10 +206,6 @@ public class StateDefinition
     /// </summary>
     public List<string> Roles { get; set; } = new();
     
-    /// <summary>
-    /// Разрешено ли редактирование параметров в этом состоянии
-    /// </summary>
-    public bool EditParameters { get; set; }
 }
 
 /// <summary>
@@ -232,6 +233,27 @@ public class TransitionDefinition
     /// Условие в ДНФ (внешний список = дизъюнкция, внутренний = конъюнкция предикатов
     /// </summary>
     public List<List<string>>? Condition { get; set; }
+}
+
+/// <summary>
+/// Определение готового объекта из конфигурации
+/// </summary>
+public class ObjectDefinition
+{
+    public string Id { get; set; } = "";
+
+    [YamlMember(Alias = "class")]
+    public string Class { get; set; } = "";
+
+    public Dictionary<string, object?>? Values { get; set; }
+}
+
+/// <summary>
+/// Файл готовых объектов (корневой элемент YAML)
+/// </summary>
+public class ObjectsFile
+{
+    public List<ObjectDefinition> Objects { get; set; } = new();
 }
 
 /// <summary>

@@ -1,0 +1,60 @@
+objects:
+  # Полная задача — быстрый трек (приоритет 2, оценка 3ч)
+  - id: task-1
+    class: task
+    values:
+      title: "Реализовать авторизацию"
+      description: "Добавить OAuth2"
+      priority: 2
+      estimated_hours: 3
+
+  # Задача для обычного трека (приоритет 3, оценка 10ч)
+  - id: task-normal
+    class: task
+    values:
+      title: "Рефакторинг модуля"
+      description: "Разделить на сервисы"
+      priority: 3
+      estimated_hours: 10
+
+  # Минимальная задача — проверка default-значений
+  # priority = 3 (default), estimated_hours = 8 (default)
+  - id: task-minimal
+    class: task
+
+  # Задача без описания — условие start_dev не выполнится
+  - id: task-no-desc
+    class: task
+    values:
+      title: "Задача без описания"
+      priority: 2
+      estimated_hours: 5
+
+  # Явный null — priority не должен заменяться default
+  - id: task-explicit-null
+    class: task
+    values:
+      title: "Задача с явным null"
+      description: "Описание есть"
+      priority: null
+      estimated_hours: 4
+
+  # Баг для демонстрации наследования параметров
+  - id: bug-1
+    class: bug
+    values:
+      title: "NPE при логине"
+      description: "NullPointerException"
+      priority: 1
+      estimated_hours: 4
+      severity: 3
+
+  # Фича для демонстрации наследования (новый параметр story_points)
+  - id: feature-1
+    class: feature
+    values:
+      title: "Dark mode"
+      description: "Тёмная тема"
+      priority: 3
+      estimated_hours: 20
+      story_points: 8

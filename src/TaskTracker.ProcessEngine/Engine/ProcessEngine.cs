@@ -4,176 +4,153 @@ using TaskTracker.ProcessEngine.Runtime;
 namespace TaskTracker.ProcessEngine.Engine;
 
 /// <summary>
-/// Движок процессов (управляет жизненным циклом объектов по шаблонам)
+/// Движок процессов: start запускает процесс над объектом, act выполняет действие
 /// </summary>
 public class ProcessEngine
 {
     private readonly ClassRegistry _classes;
     private readonly UserRegistry _users;
     private readonly TemplateRegistry _templates;
+    private readonly ObjectRegistry _objects;
     private readonly ConditionEvaluator _evaluator;
-    private readonly List<ProcessObject> _objects = new();
-    private int _nextId = 1;
+    private readonly IAuditLog _log;
+    private readonly Dictionary<string, ProcessInstance> _processes = new();
 
-    public ProcessEngine(ClassRegistry classes, UserRegistry users, TemplateRegistry templates)
+    public ProcessEngine(ClassRegistry classes, UserRegistry users,
+        TemplateRegistry templates, ObjectRegistry objects, IAuditLog log)
     {
         _classes = classes;
         _users = users;
         _templates = templates;
+        _objects = objects;
         _evaluator = new ConditionEvaluator(classes);
+        _log = log;
     }
 
     /// <summary>
-    /// Создать новый объект процесса с проверкой роли, параметров и типов
+    /// Запустить процесс над существующим объектом
     /// </summary>
-    public OperationResult CreateObject(string userId, string classId, Dictionary<string, object?>? initialValues)
+    public OperationResult Start(string userId, string objectId)
     {
-        var template = _templates.GetActingTemplate(classId);
-        if (template == null) return OperationResult.Fail($"Для класса '{classId}' нет действующего шаблона процесса");
-        if (!_users.HasAnyRole(userId, template.CreateRoles))
-            return OperationResult.Fail("У пользователя нет роли, позволяющей создавать объект");
+        if (!_users.Exists(userId))
+            return Log("start", userId, objectId, null, "rejected", "Пользователь не найден");
 
-        var effective = _classes.GetEffectiveParameters(classId);
-        var values = new Dictionary<string, object?>();
-        if (initialValues != null)
+        var obj = _objects.GetObject(objectId);
+        if (obj == null)
+            return Log("start", userId, objectId, null, "rejected", "Объект не найден");
+
+        if (_processes.ContainsKey(objectId))
         {
-            foreach (var (key, val) in initialValues)
-            {
-                var def = effective.FirstOrDefault(p => p.Id == key);
-                if (def == null) return OperationResult.Fail($"Параметр '{key}' не определён для класса '{classId}'");
-                if (val != null && !ValidateType(def.Type, val))
-                    return OperationResult.Fail($"Значение параметра '{key}' не соответствует типу {def.Type}");
-                values[key] = val;
-            }
+            var cur = _processes[objectId].CurrentState;
+            return Log("start", userId, objectId, cur, "rejected", "Процесс над объектом уже запущен", cur);
         }
 
-        var initial = template.States.FirstOrDefault(s => s.Initial);
-        if (initial == null) return OperationResult.Fail("В шаблоне нет начального состояния");
+        var template = _templates.GetActingTemplate(obj.Class);
+        if (template == null)
+            return Log("start", userId, objectId, null, "rejected",
+                $"Для класса '{obj.Class}' нет шаблона процесса");
 
-        var obj = new ProcessObject
+        if (!_users.HasAnyRole(userId, template.CreateRoles))
+            return Log("start", userId, objectId, null, "rejected",
+                "У пользователя нет роли для запуска процесса");
+
+        var initial = template.States.FirstOrDefault(s => s.Initial);
+        if (initial == null)
+            return Log("start", userId, objectId, null, "error",
+                "В шаблоне нет начального состояния");
+
+        _processes[objectId] = new ProcessInstance
         {
-            Id = _nextId++,
-            ClassId = classId,
-            CurrentState = initial.Id,
-            ParameterValues = values
+            ObjectId = objectId,
+            TemplateClass = obj.Class,
+            CurrentState = initial.Id
         };
-        obj.History.Add(new HistoryEntry
-        {
-            Timestamp = DateTime.UtcNow,
-            UserId = userId,
-            Operation = OperationType.Create,
-            Details = $"Создан объект класса '{classId}'",
-            NewState = initial.Id
-        });
-        _objects.Add(obj);
-        return OperationResult.Ok("Объект создан", obj);
+
+        return Log("start", userId, objectId, null, "accepted", "Процесс запущен", initial.Id);
     }
 
     /// <summary>
-    /// Выполнить действие над объектом (проверить роли, найти переход, вычислить условия в ДНФ)
+    /// Выполнить действие над объектом с запущенным процессом
     /// </summary>
-    public OperationResult PerformAction(string userId, int objectId, string actionId)
+    public OperationResult Act(string userId, string objectId, string actionId)
     {
-        var obj = GetObject(objectId);
-        if (obj == null) return OperationResult.Fail("Объект не найден");
-        var template = _templates.GetActingTemplate(obj.ClassId);
-        if (template == null) return OperationResult.Fail("Нет действующего шаблона процесса");
-        var state = template.States.FirstOrDefault(s => s.Id == obj.CurrentState);
-        if (state == null) return OperationResult.Fail("Текущее состояние не найдено в шаблоне");
-        if (state.Final) return OperationResult.Fail("Объект в конечном состоянии");
-        if (!_users.HasAnyRole(userId, state.Roles))
-            return OperationResult.Fail("У пользователя нет роли для действий в текущем состоянии");
+        if (!_users.Exists(userId))
+            return Log("action", userId, objectId, null, "rejected", "Пользователь не найден", action: actionId);
 
-        var candidates = template.Transitions.Where(t => t.From == state.Id && t.Action == actionId).ToList();
-        if (candidates.Count == 0) return OperationResult.Fail("Действие не предусмотрено в текущем состоянии");
+        var obj = _objects.GetObject(objectId);
+        if (obj == null)
+            return Log("action", userId, objectId, null, "rejected", "Объект не найден", action: actionId);
+
+        if (!_processes.TryGetValue(objectId, out var instance))
+            return Log("action", userId, objectId, null, "rejected", "Процесс не запущен", action: actionId);
+
+        var template = _templates.GetActingTemplate(instance.TemplateClass)!;
+        var state = template.States.FirstOrDefault(s => s.Id == instance.CurrentState);
+        if (state == null)
+            return Log("action", userId, objectId, instance.CurrentState, "error",
+                "Текущее состояние не найдено в шаблоне", action: actionId);
+
+        if (state.Final)
+            return Log("action", userId, objectId, instance.CurrentState, "rejected",
+                "Процесс завершён", action: actionId);
+
+        if (!_users.HasAnyRole(userId, state.Roles))
+            return Log("action", userId, objectId, instance.CurrentState, "rejected",
+                $"Требуется роль: {string.Join(" или ", state.Roles)}", action: actionId);
+
+        var candidates = template.Transitions
+            .Where(t => t.From == state.Id && t.Action == actionId).ToList();
+        if (candidates.Count == 0)
+            return Log("action", userId, objectId, instance.CurrentState, "rejected",
+                "Действие не предусмотрено в текущем состоянии", action: actionId);
 
         var map = template.Predicates.ToDictionary(p => p.Id);
-        var matched = candidates.Where(t => _evaluator.EvaluateCondition(t.Condition, map, obj)).ToList();
-        if (matched.Count == 0) return OperationResult.Fail("Условие не выполнено");
-        if (matched.Count > 1) return OperationResult.Fail("Ошибка шаблона: выполнены условия нескольких переходов");
+        var values = obj.Values ?? new Dictionary<string, object?>();
+        var matched = candidates
+            .Where(t => _evaluator.EvaluateCondition(t.Condition, map, obj.Class, values))
+            .ToList();
 
-        var tr = matched[0];
-        var old = obj.CurrentState;
-        obj.CurrentState = tr.To;
-        obj.History.Add(new HistoryEntry
+        if (matched.Count == 0)
+            return Log("action", userId, objectId, instance.CurrentState, "rejected",
+                "Условие перехода не выполнено", action: actionId);
+
+        if (matched.Count > 1)
+            return Log("action", userId, objectId, instance.CurrentState, "error",
+                "Ошибка шаблона: выполнены условия нескольких переходов", action: actionId);
+
+        var oldState = instance.CurrentState;
+        instance.CurrentState = matched[0].To;
+
+        return Log("action", userId, objectId, oldState, "accepted",
+            $"Переход в состояние '{matched[0].To}'", matched[0].To, actionId);
+    }
+
+    public ProcessInstance? GetProcess(string objectId) =>
+        _processes.TryGetValue(objectId, out var p) ? p : null;
+
+    private OperationResult Log(string type, string userId, string objectId,
+        string? stateBefore, string result, string message,
+        string? stateAfter = null, string? action = null)
+    {
+        stateAfter ??= stateBefore;
+
+        object command = action != null
+            ? new { type, user = userId, @object = objectId, action }
+            : (object)new { type, user = userId, @object = objectId };
+
+        _log.Write(new AuditLogEntry
         {
-            Timestamp = DateTime.UtcNow,
-            UserId = userId,
-            Operation = OperationType.Action,
-            Details = $"Действие '{actionId}': {old} -> {tr.To}",
-            NewState = tr.To
+            Command = command,
+            User = userId,
+            Object = objectId,
+            StateBefore = stateBefore,
+            StateAfter = stateAfter,
+            Result = result,
+            Reason = result != "accepted" ? message : null
         });
-        return OperationResult.Ok($"Переход в состояние '{tr.To}'", obj);
+
+        return result == "accepted"
+            ? OperationResult.Ok(message, stateBefore, stateAfter)
+            : OperationResult.Fail(message, stateBefore);
     }
-
-    /// <summary>
-    /// Изменить значение параметра объекта с проверкой состояния, роли и типа
-    /// </summary>
-    public OperationResult ModifyParameter(string userId, int objectId, string parameterId, object? value)
-    {
-        var obj = GetObject(objectId);
-        if (obj == null) return OperationResult.Fail("Объект не найден");
-        var template = _templates.GetActingTemplate(obj.ClassId);
-        if (template == null) return OperationResult.Fail("Нет действующего шаблона процесса");
-        var state = template.States.FirstOrDefault(s => s.Id == obj.CurrentState);
-        if (state == null) return OperationResult.Fail("Текущее состояние не найдено в шаблоне");
-        if (state.Final) return OperationResult.Fail("Объект в конечном состоянии");
-        if (!state.EditParameters) return OperationResult.Fail("В текущем состоянии редактирование параметров запрещено");
-        if (!_users.HasAnyRole(userId, state.Roles))
-            return OperationResult.Fail("У пользователя нет роли для изменения параметров в текущем состоянии");
-
-        var def = _classes.GetEffectiveParameters(obj.ClassId).FirstOrDefault(p => p.Id == parameterId);
-        if (def == null) return OperationResult.Fail($"Параметр '{parameterId}' не определён для класса '{obj.ClassId}'");
-        if (value != null && !ValidateType(def.Type, value))
-            return OperationResult.Fail($"Значение не соответствует типу {def.Type}");
-
-        obj.ParameterValues.TryGetValue(parameterId, out var oldValue);
-        obj.ParameterValues[parameterId] = value;
-        obj.History.Add(new HistoryEntry
-        {
-            Timestamp = DateTime.UtcNow,
-            UserId = userId,
-            Operation = OperationType.ModifyParameter,
-            Details = $"Параметр '{parameterId}': {oldValue ?? "null"} -> {value ?? "null"}",
-            NewState = null
-        });
-        return OperationResult.Ok("Параметр изменён", obj);
-    }
-
-    /// <summary>
-    /// Получить список доступных действий для пользователя в текущем состоянии объекта
-    /// </summary>
-    public List<ActionDefinition> GetAvailableActions(string userId, int objectId)
-    {
-        var obj = GetObject(objectId);
-        if (obj == null) return new();
-        var template = _templates.GetActingTemplate(obj.ClassId);
-        var state = template?.States.FirstOrDefault(s => s.Id == obj.CurrentState);
-        if (template == null || state == null || state.Final) return new();
-        if (!_users.HasAnyRole(userId, state.Roles)) return new();
-
-        var ids = template.Transitions.Where(t => t.From == state.Id).Select(t => t.Action).Distinct();
-        return ids.Select(id => template.Actions.FirstOrDefault(a => a.Id == id) ?? new ActionDefinition { Id = id, Title = id }).ToList();
-    }
-
-    /// <summary>
-    /// Найти объект процесса по ID
-    /// </summary>
-    public ProcessObject? GetObject(int objectId) => _objects.FirstOrDefault(o => o.Id == objectId);
-
-    /// <summary>
-    /// Получить журнал истории операций над объектом
-    /// </summary>
-    public List<HistoryEntry> GetHistory(int objectId) => GetObject(objectId)?.History ?? new();
-
-    /// <summary>
-    /// Проверить соответствие значения указанному типу параметра
-    /// </summary>
-    internal static bool ValidateType(ParameterType type, object value) => type switch
-    {
-        ParameterType.Integer => value is int or long or short or byte,
-        ParameterType.Decimal => value is int or long or short or byte or float or double or decimal,
-        ParameterType.String => value is string,
-        _ => false
-    };
 }
